@@ -9,11 +9,13 @@ import (
 // CompletionEntry is an Entry with options displayed in a PopUpMenu.
 type CompletionEntry struct {
 	widget.Entry
-	popupMenu     *widget.PopUp
-	navigableList *navigableList
-	Options       []string
-	pause         bool
-	itemHeight    float32
+	popupMenu         *widget.PopUp
+	navigableList     *navigableList
+	Options           []string
+	pause             bool
+	itemHeight        float32
+	OnConfirm         func(text string)
+	setTextSilentOnce bool
 }
 
 // NewCompletionEntry creates a new CompletionEntry which creates a popup menu that responds to keystrokes to navigate through the items without losing the editing ability of the text input.
@@ -57,6 +59,10 @@ func (c *CompletionEntry) SetOptions(itemList []string) {
 
 // ShowCompletion displays the completion menu
 func (c *CompletionEntry) ShowCompletion() {
+	if c.setTextSilentOnce == true {
+		c.setTextSilentOnce = false
+		return
+	}
 	if c.pause {
 		return
 	}
@@ -81,13 +87,15 @@ func (c *CompletionEntry) ShowCompletion() {
 // calculate the max size to make the popup to cover everything below the entry
 func (c *CompletionEntry) maxSize() fyne.Size {
 	cnv := fyne.CurrentApp().Driver().CanvasForObject(c)
-
 	if c.itemHeight == 0 {
 		// set item height to cache
 		c.itemHeight = c.navigableList.CreateItem().MinSize().Height
 	}
 
 	listheight := float32(len(c.Options))*(c.itemHeight+2*theme.Padding()+theme.SeparatorThicknessSize()) + 2*theme.Padding()
+	if cnv==nil {
+		return fyne.NewSize(entrySize.Width, listheight)
+	}
 	canvasSize := cnv.Size()
 	entrySize := c.Size()
 	if canvasSize.Height > listheight {
@@ -113,6 +121,40 @@ func (c *CompletionEntry) setTextFromMenu(s string) {
 	c.Entry.Refresh()
 	c.pause = false
 	c.popupMenu.Hide()
+	if c.OnConfirm != nil {
+		c.OnConfirm(s)
+	}
+}
+
+func (e *CompletionEntry) CreateRenderer() fyne.WidgetRenderer {
+	e.ExtendBaseWidget(e)
+	e.ActionItem = e.setupDropDown()
+	return e.Entry.CreateRenderer()
+}
+
+func (e *CompletionEntry) setupDropDown() *widget.Button {
+	dropDownButton := widget.NewButton("", func() {
+		e.ShowCompletion()
+	})
+	dropDownButton.Importance = widget.LowImportance
+	dropDownButton.SetIcon(theme.MenuDropDownIcon())
+	return dropDownButton
+}
+
+func (e *CompletionEntry) TypedKey(event *fyne.KeyEvent) {
+	switch event.Name {
+	case fyne.KeyReturn, fyne.KeyEnter:
+		if e.OnConfirm != nil {
+			e.OnConfirm(e.Entry.Text)
+		}
+	default:
+		e.Entry.TypedKey(event)
+	}
+}
+
+func (e *CompletionEntry) SetTextSilient(text string) {
+	e.setTextSilentOnce = true
+	e.Entry.SetText(text)
 }
 
 type navigableList struct {
@@ -147,6 +189,7 @@ func newNavigableList(items []string, entry *widget.Entry, setTextFromMenu func(
 		OnSelected: func(id widget.ListItemID) {
 			if !n.navigating && id > -1 {
 				setTextFromMenu(n.items[id])
+
 			}
 			n.navigating = false
 		},
